@@ -1,4 +1,5 @@
-
+from llvmlite import ir
+import io
 
 # -----------------------------------------------------------------------------
 # calc.py
@@ -19,7 +20,7 @@ tokens = (
     'COMMA',
     'NAME', 'NUMBER',
     'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'EQUALS',
-    'LPAREN', 'RPAREN'
+    'LPAREN', 'RPAREN', 'SEMI'
 ) + tuple(reserved.values())
 
 # Tokens
@@ -34,6 +35,7 @@ t_RPAREN = r'\)'
 t_FUN = r'fun'
 t_END = r'end'
 t_COMMA = r','
+t_SEMI = r';'
 
 
 def t_NAME(t):
@@ -68,7 +70,6 @@ def t_error(t):
 
 # Build the lexer
 import ply.lex as lex
-lexer = lex.lex()
 
 # Parsing rules
 
@@ -82,15 +83,25 @@ precedence = (
 names = {}
 
 
+def p_statements(t):
+    '''statements : statement
+                  | statement SEMI
+                  | statement SEMI statements'''
+    t[0] = t[1]
+
+
 def p_statement_fun(t):
     #'statement : FUN NAME LPAREN arguments RPAREN statements END'
-    'statement : FUN NAME LPAREN RPAREN END'
+    'statement : FUN NAME LPAREN arguments RPAREN statements END'
     print("fun {}".format(t[2]))
+    t[0] = t[1]
 
 
 def p_statement_assign(t):
     'statement : NAME EQUALS expression'
-    names[t[1]] = t[3]
+    name = t[3]
+    names[t[1]] = name
+    generator.g_var(name)
 
 
 def p_statement_expr(t):
@@ -98,21 +109,21 @@ def p_statement_expr(t):
     print(t[1])
 
 
-def p_statements(t):
-    '''statements : statement
-                  | statement statements'''
-
-
 def p_arguments_none(t):
     'arguments : '
+
+    t[0] = []
 
 
 def p_arguments_one(t):
     'arguments : NAME'
+    t[0] = [t[1]]
 
 
 def p_arguments_many(t):
     'arguments : NAME COMMA arguments'
+    t[0] = l = [t[1]]
+    l.extend(t[3])
 
 
 def p_expression_binop(t):
@@ -155,19 +166,56 @@ def p_expression_name(t):
 
 
 def p_error(t):
-    print("Syntax error at '%s'" % t.value)
+    # tok = parser.parser.token()
+    if t is not None:
+        print("Syntax error at '{}' at line {}.".format(
+            t.value, t.lineno
+        ))
+    else:
+        print("Some mystic error happend.")
 
 
 import ply.yacc as yacc
-parser = yacc.yacc()
+
+generator = None
 
 
-class Parser(object):
+class Generator(object):
     def __init__(self):
+        global generator
+
         self.parser = yacc.yacc()
+        self.int_type = ir.IntType(64)
+        self.setup_main_context()
+        generator = self
 
     def parse(self, s):
         return self.parser.parse(s)
+
+    def setup_main_context(self):
+        self.main_context = None
+        self.set_module()
+
+    def set_module(self):
+        self.module = ir.Module("__main__")
+
+    def g_var(self, name):
+        var = ir.GlobalVariable(self.module, self.int_type, name)
+
+    def print(self):
+        o = io.StringIO()
+        print(self.module, file=o)
+        return o.getvalue()
+
+
+lexer = None
+parser = None
+
+
+def new_parser():
+    global parser, lexer
+    lexer = lex.lex()
+    parser = yacc.yacc()
 
 
 def pars_test_interactive():
@@ -177,46 +225,3 @@ def pars_test_interactive():
         except EOFError:
             break
         parser.parse(s)
-
-
-def pars_test():
-    s = """
-    a=10
-    a+a
-    fun gg(a)
-        a=1
-    end
-    """
-    parser = Parser()
-    parser.parse(s)
-
-
-def lex_test():
-    # Test it out
-    data = '''
-    3 + 4 * 10
-      + -20 *2
-    fun a(f,g)
-        g=g
-    end
-    '''
-    data = '''
-    3 + 4 * 10
-      + -20 *2
-    fun a()
-    end
-    '''
-
-    # Give the lexer some input
-    lexer.input(data)
-
-    # Tokenize
-    while True:
-        tok = lexer.token()
-        if not tok:
-            break      # No more input
-        print(tok)
-
-
-# lex_test()
-pars_test()
