@@ -223,12 +223,14 @@ class Generator(object):
         self.names[name] = func
         self.context.append({})
         locals = self.names
+        targs = tuple(args)
         for arg in args:
             if arg in locals:
                 raise GeneratorError(
                     "duplicate argument name '{}'".format(arg))
             else:
-                locals[arg] = tuple(args)
+                locals[arg] = targs
+                print("Add local '{}'".format(arg))
         self.block = func.append_basic_block(name="_start")
         self.builder = ir.IRBuilder(self.block)
         print("----->>> Builder created")
@@ -246,6 +248,7 @@ class Generator(object):
         if name not in names:
             var = ir.GlobalVariable(self.module, self.int_type, name)
             names[name] = var
+            print("Add global '{}'".format(name))
 
     def load_var(self, name):
         var = self.find_var(name)
