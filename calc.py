@@ -1,11 +1,23 @@
 from llvmlite import ir
 import io
 
+
+# def GeneratorError(Exception):
+#     def __init__(self, m):
+#         self.message = m
+
+#     def __str__(self):
+#         return self.message
+
+
+GeneratorError = RuntimeError
+
 # -----------------------------------------------------------------------------
 # calc.py
 #
 # A simple calculator with variables -- all in one file.
 # -----------------------------------------------------------------------------
+
 
 reserved = {
     'if': 'IF',
@@ -80,7 +92,6 @@ precedence = (
 )
 
 # dictionary of names
-names = {}
 
 
 def p_statements(t):
@@ -99,8 +110,9 @@ def p_statement_fun(t):
 
 def p_statement_assign(t):
     'statement : NAME EQUALS expression'
-    name = t[3]
-    names[t[1]] = name
+    val = t[3]
+    name = t[1]
+    # Translate expression
     generator.g_var(name)
 
 
@@ -132,13 +144,13 @@ def p_expression_binop(t):
                   | expression TIMES expression
                   | expression DIVIDE expression'''
     if t[2] == '+':
-        t[0] = t[1] + t[3]
+        t[0] = generator.builder.fadd(t[1], t[3])
     elif t[2] == '-':
-        t[0] = t[1] - t[3]
+        t[0] = generator.builder.fsub(t[1], t[3])
     elif t[2] == '*':
-        t[0] = t[1] * t[3]
+        t[0] = generator.builder.fmul(t[1], t[3])
     elif t[2] == '/':
-        t[0] = t[1] / t[3]
+        t[0] = generator.builder.fdiv(t[1], t[3])
 
 
 def p_expression_uminus(t):
@@ -158,11 +170,9 @@ def p_expression_number(t):
 
 def p_expression_name(t):
     'expression : NAME'
-    try:
-        t[0] = names[t[1]]
-    except LookupError:
-        print("Undefined name '%s'" % t[1])
-        t[0] = 0
+    name = t[1]
+    var = generator.load_var(name)
+    t[0] = var
 
 
 def p_error(t):
@@ -185,6 +195,7 @@ class Generator(object):
         global generator
 
         self.parser = yacc.yacc()
+        self.context = []
         self.int_type = ir.IntType(64)
         self.setup_main_context()
         generator = self
@@ -192,20 +203,76 @@ class Generator(object):
     def parse(self, s):
         return self.parser.parse(s)
 
+    @property
+    def names(self):
+        return self.context[-1]
+
     def setup_main_context(self):
-        self.main_context = None
         self.set_module()
+        self.context.append({})
+        self.functions = []
+        self.main, self.main_type = self.g_func("_main", [])
+
+    def g_func(self, name, args):
+        if name in self.names:
+            raise GeneratorError(
+                "identifier '{}' is already defined".format(name))
+        ftype = ir.FunctionType(self.int_type, [self.int_type for arg in args])
+        func = ir.Function(self.module, ftype, name=name)
+        self.functions.append(func)
+        self.names[name] = func
+        self.context.append({})
+        locals = self.names
+        for arg in args:
+            if arg in locals:
+                raise GeneratorError(
+                    "duplicate argument name '{}'".format(arg))
+            else:
+                locals[arg] = tuple(args)
+        self.block = func.append_basic_block(name="_start")
+        self.builder = ir.IRBuilder(self.block)
+        print("----->>> Builder created")
+        return func, ftype
+
+    @property
+    def cfunc(self):
+        return self.functions[-1]
 
     def set_module(self):
         self.module = ir.Module("__main__")
 
     def g_var(self, name):
-        var = ir.GlobalVariable(self.module, self.int_type, name)
+        names = self.context[0]
+        if name not in names:
+            var = ir.GlobalVariable(self.module, self.int_type, name)
+            names[name] = var
 
-    def print(self):
+    def load_var(self, name):
+        var = self.find_var(name)
+        rc = self.builder.load(var)
+        return rc
+
+    def find_var(self, name):
+        for ctx in reversed(self.context):
+            if name in ctx:
+                break
+        else:
+            raise GeneratorError("identifier '{}' not found".format(name))
+        # The var has found
+        var = ctx[name]
+        if isinstance(var, tuple):  # The variable is local
+            i = var.index(name)
+            attr = self.cfunc.args[i]
+            return attr
+        return var
+
+    def __str__(self):
         o = io.StringIO()
         print(self.module, file=o)
         return o.getvalue()
+
+    def print(self):
+        print(self.module)
 
 
 lexer = None

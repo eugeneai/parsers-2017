@@ -1,10 +1,11 @@
 import calc
+from nose.tools import nottest
 
 INP = """a=10;
         a+a;
         fun gg(a,b)
             a=b;
-            a
+            b+b
         end;
         fun ff()
             42
@@ -18,11 +19,18 @@ class TestParser:
         self.g = calc.Generator()
         pass
 
+    @nottest
+    def test_simple_prog(self):
+        s = "a=10"
+        self.g.parse(s)
+        self.g.print()
+
     def test_parser(self):
         s = INP
         self.g.parse(s)
-        print(self.g.print())
+        self.g.print()
 
+    @nottest
     def test_lexer(self):
 
         # Test it out
